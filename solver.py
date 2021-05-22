@@ -1,16 +1,18 @@
 import tensorflow as tf
 import numpy as np
-
-from pyDOE import lhs
+from tensorflow.python.keras.engine import training
 
 class LRSchedule:
-  def __init__(self, trainer, patience=10, decay_factor=0.1, min_lr=1e-5) -> None:
+  def __init__(self, patience=10, decay_factor=0.1, min_lr=1e-5) -> None:
     self.patience = patience
     self.factor = decay_factor
     self.counter = 0
     self.best_loss = np.inf
-    self.trainer = trainer
+    self.trainer = None
     self.min_lr = min_lr
+
+  def setTrainer(self, trainer) -> None:
+    self.trainer = trainer
 
   def monitor(self) -> None:
     val_loss = self.trainer.val_history[-1]
@@ -31,7 +33,7 @@ class LRSchedule:
 class Solver:
 
   def __init__(self, val_col, val_bound, val_bound_cond, phys_fun,
-                nb_neurons=20, nb_layers=8, lr=1e-2, lr_sch=None) -> None:
+                nb_neurons=20, nb_layers=7, lr=1e-2, lr_sch=None, dropout=0.1) -> None:
     """val_col, val_bound are arrays containing the data points"""
     assert val_col.shape[1] == val_bound.shape[1], "collocation and boundary points should have the same dimension"
     assert val_bound_cond.shape[0] == val_bound.shape[0], "invalid number of training points"
@@ -43,9 +45,11 @@ class Solver:
 
     inputs = tf.keras.Input(shape=self.input_size)
 
-    outputs = self.one_layer(inputs) 
-    for _ in range(1, self.nb_layers - 2): 
+    outputs = inputs
+    for _ in range(self.nb_layers): 
       outputs = self.one_layer(outputs)
+      if dropout > 0:
+        outputs = tf.keras.layers.Dropout(dropout)(outputs)
 
     # output layer
     outputs = tf.keras.layers.Dense(self.output_size)(outputs)
@@ -56,9 +60,12 @@ class Solver:
     self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
     self.lr = lr
     if lr_sch is None:
-      self.lr_schedule = LRSchedule(self)
+      self.lr_schedule = LRSchedule()
+
     else:
       self.lr_schedule = lr_sch
+
+    self.lr_schedule.setTrainer(self)
 
     self.val_col_var = []
     self.val_bound_var = []
@@ -81,8 +88,8 @@ class Solver:
     mse = tf.keras.losses.MeanSquaredError()
 
     with tf.GradientTape() as g:
-      physics_res = self.phys_fun(self.v, *col_var)
-      boundary_res = self.v(*bound_var)
+      physics_res = self.phys_fun(self.v, *col_var, training=True)
+      boundary_res = self.v(*bound_var, training=True)
       interior_loss = mse(physics_res, tf.zeros_like(physics_res))
       boundary_loss = mse(boundary_res, bound_cond)
       total_loss = boundary_loss + interior_loss
@@ -95,20 +102,21 @@ class Solver:
                                        self.model.trainable_variables))
 
     # saving the losses
-    self.train_history.append(total_loss.numpy())
+    total_loss = total_loss.numpy()
+    self.train_history.append(total_loss)
 
     # computing the validation loss
     physics_res = self.phys_fun(self.v, *self.val_col_var)
     boundary_res = self.v(*self.val_bound_var, training=False)
     interior_loss = mse(physics_res, tf.zeros_like(physics_res))
     boundary_loss = mse(boundary_res, self.val_boundary_cond)
-    total_val_loss = boundary_loss + interior_loss
-    self.val_history.append(total_val_loss.numpy())
+    total_val_loss = (boundary_loss + interior_loss).numpy()
+    self.val_history.append(total_val_loss)
     
     # update the lr if necessary
     self.lr_schedule.monitor()
     
-    return total_loss.numpy(), total_val_loss.numpy()
+    return total_loss, total_val_loss
     
   def train(self, nb_epoch, collocation_points, boundary_points, bound_cond, verbose=True):
     print("starting training")
@@ -124,7 +132,9 @@ class Solver:
     for i in range(nb_epoch):
       train_loss, val_loss = self.train_step(train_col_var, train_bound_var, bound_cond)
       if verbose:
-        print("epoch {}/{} --- train_loss : {} --- val_loss : {}".format(i+1, nb_epoch, train_loss, val_loss))
+        print("epoch {}/{} --- train_loss : {} --- val_loss : {} -- lr : {}".format(i+1, nb_epoch, 
+                                                                                    train_loss, val_loss,
+                                                                                    self.lr))
     
     print("training done")
   def __call__(self, input, training=True):
