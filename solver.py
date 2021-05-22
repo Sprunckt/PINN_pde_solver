@@ -24,6 +24,7 @@ class LRSchedule:
         self.counter = 0
         new_lr = np.maximum(self.factor*self.trainer.lr, 
                             self.min_lr)
+        self.trainer.lr = new_lr
         self.trainer.optimizer.learning_rate = new_lr
 
 
@@ -53,6 +54,7 @@ class Solver:
     self.phys_fun = phys_fun
 
     self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    self.lr = lr
     if lr_sch is None:
       self.lr_schedule = LRSchedule(self)
     else:
