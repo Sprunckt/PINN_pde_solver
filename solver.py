@@ -1,25 +1,53 @@
 import tensorflow as tf
 import numpy as np
 from tensorflow.python.keras.engine import training
+from tensorflow.python.ops.gen_control_flow_ops import Exit
+
 
 class LRSchedule:
-  def __init__(self, patience=10, decay_factor=0.1, min_lr=1e-5) -> None:
+  def __init__(self, patience=10, decay_factor=1, min_lr=1e-5, restore_best=False, 
+               lr_marks=None, lr_values=None) -> None:
     self.patience = patience
-    self.factor = decay_factor
     self.counter = 0
+    self.global_counter = 0
+
+    self.lr_ind = 0
+    self.lr_marks = lr_marks
+    self.lr_values = lr_values
+
+    if self.lr_marks:
+      print("using the given learning rate markers")
+      assert self.lr_values is not None, "in that mode lr values must be provided"
+      self.factor = 1.
+      self.nb_marks = len(self.lr_values)
+      self._monitor_function = self._update_lr_on_schedule
+    else:
+      self.factor = decay_factor
+      self.nb_marks = 0
+      self._monitor_function = self._update_lr_on_val_loss
+
     self.best_loss = np.inf
     self.trainer = None
     self.min_lr = min_lr
-
+    self.best_weights = None
+    self.restore = restore_best
+    
   def setTrainer(self, trainer) -> None:
     self.trainer = trainer
 
-  def monitor(self) -> None:
-    val_loss = self.trainer.val_history[-1]
+  def _update_lr_on_schedule(self, _) -> None:
+    self.global_counter += 1
+    if self.lr_ind >= self.nb_marks:
+      pass
+    elif self.global_counter >= self.lr_marks[self.lr_ind]:
+        new_lr = self.lr_values[self.lr_ind]
+        self.trainer.lr = new_lr
+        self.trainer.optimizer.learning_rate = new_lr
+        self.lr_ind += 1
 
-    if val_loss < self.best_loss:
+  def _update_lr_on_val_loss(self, upgrade) -> None:
+    if upgrade:
       self.counter = 0
-      self.best_loss = val_loss
     else:
       self.counter += 1
       if self.counter >= self.patience:  # update the learning rate
@@ -29,6 +57,20 @@ class LRSchedule:
         self.trainer.lr = new_lr
         self.trainer.optimizer.learning_rate = new_lr
 
+  def monitor(self):
+
+    if self.restore:
+      val_loss = self.trainer.val_history[-1]
+      upgrade = val_loss < self.best_loss
+      if upgrade:
+        self.best_loss = val_loss
+        self.best_weights = self.trainer.model.get_weights()
+
+    self._monitor_function(upgrade)
+
+  def train_end(self):
+    if self.restore:
+      self.trainer.model.set_weights(self.best_weights)
 
 class Solver:
 
@@ -43,6 +85,7 @@ class Solver:
     self.nb_neurons = nb_neurons
     self.nb_layers = nb_layers
 
+    # defining the model
     inputs = tf.keras.Input(shape=self.input_size)
 
     outputs = inputs
@@ -52,7 +95,7 @@ class Solver:
         outputs = tf.keras.layers.Dropout(dropout)(outputs)
 
     # output layer
-    outputs = tf.keras.layers.Dense(self.output_size)(outputs)
+    outputs = tf.keras.layers.Dense(self.output_size,  kernel_initializer=tf.keras.initializers.GlorotNormal())(outputs)
     self.model = tf.keras.Model(inputs=inputs, outputs=outputs)
 
     self.phys_fun = phys_fun
@@ -77,12 +120,13 @@ class Solver:
     self.train_history, self.val_history = [], []
 
   def one_layer(self, inputs, activation=tf.keras.activations.tanh):
-    return tf.keras.layers.Dense(self.nb_neurons, activation=activation)(inputs)
+    return tf.keras.layers.Dense(self.nb_neurons, activation=activation, 
+                                 kernel_initializer=tf.keras.initializers.GlorotNormal())(inputs)
 
   @tf.function
   def v(self, *args, training=False) -> tf.Tensor:
-    v = self.model(tf.concat(args, axis=1), training=training)
-    return v
+    v_res = self.model(tf.concat(args, axis=1), training=training)
+    return v_res
 
   def train_step(self, col_var, bound_var, bound_cond):
     mse = tf.keras.losses.MeanSquaredError()
@@ -136,6 +180,8 @@ class Solver:
                                                                                     train_loss, val_loss,
                                                                                     self.lr))
     
-    print("training done")
+    print("training complete")
+    self.lr_schedule.train_end()
+
   def __call__(self, input, training=True):
     return self.model(input, training=training)
