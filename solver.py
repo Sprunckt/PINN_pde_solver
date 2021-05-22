@@ -1,8 +1,5 @@
 import tensorflow as tf
 import numpy as np
-from tensorflow.python.keras.engine import training
-from tensorflow.python.ops.gen_control_flow_ops import Exit
-
 
 class LRSchedule:
   def __init__(self, patience=10, decay_factor=1, min_lr=1e-5, restore_best=False, 
