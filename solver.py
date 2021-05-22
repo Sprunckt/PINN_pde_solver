@@ -180,5 +180,5 @@ class Solver:
     print("training complete")
     self.lr_schedule.train_end()
 
-  def __call__(self, input, training=True):
+  def __call__(self, input, training=False):
     return self.model(input, training=training)
