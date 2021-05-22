@@ -4,7 +4,7 @@ import numpy as np
 from pyDOE import lhs
 
 class LRSchedule:
-  def __init__(self, trainer, patience=10, decay_factor=0.2, min_lr=1e-5) -> None:
+  def __init__(self, trainer, patience=10, decay_factor=0.1, min_lr=1e-5) -> None:
     self.patience = patience
     self.factor = decay_factor
     self.counter = 0
@@ -95,7 +95,7 @@ class Solver:
                                        self.model.trainable_variables))
 
     # saving the losses
-    self.train_history.append(total_loss)
+    self.train_history.append(total_loss.numpy())
 
     # computing the validation loss
     physics_res = self.phys_fun(self.v, *self.val_col_var)
@@ -103,13 +103,14 @@ class Solver:
     interior_loss = mse(physics_res, tf.zeros_like(physics_res))
     boundary_loss = mse(boundary_res, self.val_boundary_cond)
     total_val_loss = boundary_loss + interior_loss
-    self.val_history.append(total_val_loss)
+    self.val_history.append(total_val_loss.numpy())
     
     # update the lr if necessary
     self.lr_schedule.monitor()
     
+    return total_loss.numpy(), total_val_loss.numpy()
     
-  def train(self, nb_epoch, collocation_points, boundary_points, bound_cond):
+  def train(self, nb_epoch, collocation_points, boundary_points, bound_cond, verbose=True):
     print("starting training")
     assert self.input_size == collocation_points.shape[1] == boundary_points.shape[1], "invalid input dimension"
     assert self.output_size == bound_cond.shape[1]
@@ -120,11 +121,10 @@ class Solver:
       train_col_var.append(tf.reshape(collocation_points[:, i], [-1, 1]))
       train_bound_var.append(tf.reshape(boundary_points[:, i], [-1, 1]))
 
-    update_marker = np.floor(0.05 * nb_epoch)
     for i in range(nb_epoch):
-      if i > 0 and i % update_marker == 0:
-        print(np.round(i * 100 / nb_epoch, 3), "% done")
-      self.train_step(train_col_var, train_bound_var, bound_cond)
+      train_loss, val_loss = self.train_step(train_col_var, train_bound_var, bound_cond)
+      if verbose:
+        print("epoch {}/{} --- train_loss : {} --- val_loss : {}".format(i+1, nb_epoch, train_loss, val_loss))
     
     print("training done")
   def __call__(self, input, training=True):
