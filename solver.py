@@ -147,7 +147,7 @@ class Solver:
     self.train_history.append(total_loss)
 
     # computing the validation loss
-    physics_res = self.phys_fun(self.v, *self.val_col_var)
+    physics_res = self.phys_fun(self.v, *self.val_col_var, training=False)
     boundary_res = self.v(*self.val_bound_var, training=False)
     interior_loss = mse(physics_res, tf.zeros_like(physics_res))
     boundary_loss = mse(boundary_res, self.val_boundary_cond)
