@@ -4,6 +4,15 @@ import numpy as np
 class LRSchedule:
   def __init__(self, patience=10, decay_factor=1, min_lr=1e-5, restore_best=False, 
                lr_marks=None, lr_values=None) -> None:
+    """Define a learning rate schedule to update the learning rate during training.
+      The lr is multiplied by the decay_factor at each update, but cannot go under min_lr.
+      Two modes for updating : 
+      -setting lr_marks and lr_values : two lists giving the epochs after which the lr must
+      be updated, and the corresponding lr values, patience argument is not used
+      -lr_marks=None : the lr decreases when the validation loss did not decrease after 'patience'
+      epochs, lr_values is not used.
+      If decay_factor == 1, the learning rate is constant."""
+
     self.patience = patience
     self.counter = 0
     self.global_counter = 0
@@ -73,7 +82,9 @@ class Solver:
 
   def __init__(self, val_col, val_bound, val_bound_cond, phys_fun,
                 nb_neurons=20, nb_layers=7, lr=1e-2, lr_sch=None, dropout=0.1) -> None:
-    """val_col, val_bound are arrays containing the data points"""
+    """val_col, val_bound are arrays containing the data points, phys_fun the function defining the PDE.
+    lr_sch argument controls the learning rate schedule (constant learning rate by default)."""
+    
     assert val_col.shape[1] == val_bound.shape[1], "collocation and boundary points should have the same dimension"
     assert val_bound_cond.shape[0] == val_bound.shape[0], "invalid number of training points"
 
